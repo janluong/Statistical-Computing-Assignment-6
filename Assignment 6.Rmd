@@ -1,0 +1,371 @@
+---
+title: "Assignment 6"
+author: "Janice Luong"
+date: "December 1, 2015"
+output: html_document
+---
+
+###Part 1
+####1. Process the current summary page of posts, starting with the first page of results
+####2. For each post, extract information about: who posted it, when it was posted, the title of the post, the reputation level of the poster, the current number of views for the post, the current number of answers for the post, the vote "score" for the post, the URL for the page with the post, answers and comments, the id (a number) uniquely identifying the post.
+####3. Obtain the URL for the "next" page listing posts
+
+```{r, warning = FALSE}
+library(httr)
+library(XML)
+
+getStackOverFlowQuestions = function(tag = "r", numberOfPages = -1){
+  requestURL = paste("/questions/tagged/", tag, "?sort=newest&pageSize=50", sep = "")
+  
+  #had to remove s from https because https encrypts data transfer
+  website = "http://www.stackoverflow.com"
+    
+   #create an empty data frame  
+   allData = data.frame()
+  
+   #set where my counter will start depending on what the user enters
+  if(numberOfPages > 0)
+    i = 0
+  else
+    i = -2
+   
+  #I used this to ensure that my loop was going through all the pages  
+  #actualpage = 1 
+  
+  while(!is.null(requestURL) && i < numberOfPages){
+    #I used this to ensure that my loop was going through all the pages
+    #print(paste("Page", actualpage))   
+    #actualpage = actualpage + 1
+    
+    #get the website
+    doc = GET(getRelativeURL(as(requestURL, "character"), website))
+    #parse the HTML doc
+    docTree = htmlTreeParse(doc, useInternalNodes = TRUE)
+    
+    #//*element*//*element* the // is to the left of each element, //a grabs the elements that are <a>, 
+    #similarly //div grabs the elements that are <div>
+    
+    #goes through each question element on the page, then it returns a list with each of the question's attributes
+    results = xpathApply(docTree, "//div[@class = 'question-summary']", function(que){
+      #[[1]] to grab the first result
+      #the <a> tag doesn't have a specific attribute that would apply to the other questions so I didn't specify an attribute
+      userNode = getNodeSet(que, ".//div[@class = 'user-details']//a/text()")
+      if(is.null(userNode)){
+        #for people who don't have an account, the name isnt encased in the <a>
+        userNode = getNodeSet(que, ".//div[@class = 'user-details']/text()")
+      } #end of if statment
+    
+      questionData = list(
+        #get the post's ID, use gsub to remove all punctuation and letters, /@id = it's ID attribute, [[1]] to grab the first result and then another [[1]] because for some reason they nested the string deep in there, drop anything that is not a digit since id's for stackOverFlow consists of only digits
+        posterID = gsub("[^0-9]", "", getNodeSet(que, "./@id")[[1]][[1]], ignore.case = TRUE),
+        
+        #get the date the user posted the question. [[1]] to grab the first result and then another [[1]] because for some reason they nested the string deep in there
+        date = getNodeSet(que, ".//span[@class = 'relativetime']/@title")[[1]][[1]],
+        
+        #get the tags of the question. When getting the tags, the best way to look at it is from the inside out starting with getNodeSet that just grabs all the element nodes next to it is a function that sapply does to every match it converts it into a character, collapse combines a list while sep combines multiple string parameters. x is the value that is passed in. I noticed the problem with getNodeSet is it returns kind of a complex value it's not a string or number so the as(x, "character") converts every value in the list to a charcter
+        tags = paste(sapply(getNodeSet(que, ".//a[@rel = 'tag']/text()"), function(x){as(x, "character")}), collapse = "; "),
+        
+        #get the title of the question. by going through the parent a, specifcally with the class 'question-hyperlink', grab the text specfically the first one hence [[1]], and change it to a character
+        title = as(getNodeSet(que, ".//a[@class = 'question-hyperlink']/text()")[[1]], "character"),
+        
+        #get the link to the post/question on stack overflow, only need one / before @href because you are selecting the same element. [[1]] to grab the first result and then another [[1]] because for some reason they nest the string deep in there. /@href means it is the child of //a
+        url = paste(website, getNodeSet(que, ".//a[@class = 'question-hyperlink']/@href")[[1]][[1]], sep = ""),
+        
+        #get the amount of views, trim all white spaces and remove anything that is not a digit, [[1]] to grab the first result. Sometimes the class's name included a space, so I had to include it in order to get the attribute
+        views = gsub("[^0-9]", "", trimws(as(getNodeSet(que, ".//div[@class = 'views ']/text()")[[1]], "character")), ignore.case = TRUE),
+        
+        #get the amount of votes, i had to do //strong because I needed to go down the decendent of span, use [[1]] to grab the first result then change it into a character
+        votes = as(getNodeSet(que, ".//span[@class = 'vote-count-post ']//strong/text()")[[1]], "character"),
+        
+        #get the number of answers for that post, I wanted all possible answers whether or not it was an accepted or unaccepted answer. If it does not have either, then it returns 0. use [[1]] to grab the first result
+        answers = as(getNodeSet(que, ".//div[@class = 'status answered-accepted' or @class = 'status answered' or @class = 'status unanswered']//strong/text()")[[1]], "character"),
+        
+        #get who posted it
+        user = as(userNode[[1]], "character"),
+        
+        #get the poster's reputation, grab only the first result hence [[1]], then change it into a character
+        reputation = trimws(as(getNodeSet(que, ".//span[@class = 'reputation-score']/text()")[[1]], "character"))
+        )
+    
+      return(questionData)
+      }) #end of results function
+  
+  #adds all the questions' info and their attributes to a data frame. The outter rbind is to add the next page's questions' info and their attributes to the bottom of my current data frame and re-assign it allData again
+  allData = rbind(allData, data.frame(Reduce(rbind, results)))
+  
+  ####3. Obtain the URL for the "next" page listing posts####
+  #go to the next page and assign that as my new requestURL
+  requestURL = getNodeSet(docTree, "//a[@rel = 'next']/@href")[[1]][[1]]
+  
+  #my counter to go through the pages requested by the user (or the number inputed into the function)
+  if(numberOfPages > 0)
+    i = i + 1
+  } #end of while-loop
+  
+  #return the final data frame (from all the pages requested)
+  return(allData)
+   
+} #end of getStackOverFlowQuestions() function
+```
+```{r, warning=FALSE}
+#example of changing tag and number of pages
+head(getStackOverFlowQuestions("javascript", 1), 6)
+
+#get only the first 100 pages of questions (7500 posts/questions)
+getAllQuestion = getStackOverFlowQuestions(,150)
+```
+```{r, results = 'hide', warning=FALSE}
+#change the class of the columns that return to numberic incase I want to compare them in the future
+as.numeric(getAllQuestion$votes, getAllQuestion$views, getAllQuestion$answers, getAllQuestion$reputation)
+```
+```{r}
+head(getAllQuestion)
+```
+
+I started having issues with getting the "next" button for the URL even though the URL was right (as in when I tested it, the URL was a real URL). When I changed it to one big function, my errors went away. I noticed it is easier to make one large function since when getting results, most of the coding I had to do looked very similar to each one. To get the URL, I took the first page of the questions tagged R, and put in one variable: tag, so if the user wants to find all questions that are tagged css, then css will be passed in as a parameter for tag and that will change the URL. The second parameter, which is the number of pages (numberOfPages) the user requests, does not go into the URL as a variable, rather, it is used as a counter for how many times the loop should run and hit the "next" button. 
+
+Inside getStackOverFlowQuestions function, I created an empty data frame to store all the information I find from the variable "results". The "results" function first gets all the question summaries for the page it is currently on. Next, it then gets the user's user/display name. If the user's user/display name does not exist, then instead of setting it NULL or NA, the function needs to go to another path to grab the user's name. This is necessary to do because some users do not have a StackOverFlow account, so they are considered "anonymous".  The userNode will be called into the questionData list. We do not need to worry about posts that do not have tags because StackOverflow forces the user/poster to have at least 1 tag for their post/question or else I would not have been able to scrape all the questions tagged as r. Inside my question list, it returns a list of all the information I ask it to get. Inside the questionList, I had to set all the attributes that I used /text and the end of the path to a character vector, or else the text I took from the path would come out as gibberish. Some of the attributes I got I needed to remove the white spaces or else it would have /r/n around the text I grabbed. 
+
+For some reason, when I tried to use as.character() to change the attributes, to a character vector, it did not work. I would get an error message saying: Error in as.vector(x, "character") : cannot coerce type 'externalptr' to vector of type 'character', but as(.., "character") works well. I needed to change the class of the attributes because sometimes the text I grabbed came out a gargon (this was also so I could add it to my data frame. I would get an error message saying: Error in as.vector(x, "character") : cannot coerce type 'externalptr' to vector of type 'character', but as(.., "character") works well.
+Then I started getting all the path's to get the attributes. To do so, if I were to do //tag-name, there's many <div> tag names though so I narrowed it by putting in an attribute with [@ attribute-name = 'attribute-value'], so when using getNodeSet, after I put in the doc, the general idea to get the attributes is: tag-name[@ attribute-name = 'attribute-value'] . While getting the paths, sometimes I used / or //. This is because if I want to get the child of the parent, then I use /. One / means it is a direct descendent of the parent or essentially you are still selecting the same element, so that's why you only need one /. But when I use // this means to get the descendent of the parent and is not directly under the parent, it is father down the tree. When getting the question ID, I had to use gsub() to remove everything that was not a digit or else it would have "question-summary-" the ID I was grabbing. I also used gsub() when getting the number of views or else to drop the word "view" from the attribute/text I grabbed. Since I do not want that to be part of my data frame, I used gsub() to drop it. Getting the tags was a bit more difficult since I had to get every single tag for the post and have them separated by a ;. I also had to change every single one of the tags to a character or else it would come as gibberish (getNodeSet returns some kind of complex value). I used sapply() so it would go through every single tag to make it into a character. I set the parameter collapse = "; ", so it would separate all the characters in the string by a "; ".
+
+Next, I needed to make a while-loop that will go through all the pages of the questions. I needed two conditions: the requestURL is not NULL and that the number of pages is greater than i (counter). If the requestURL is NULL this means the "next" page button does not exist. So that means my function is already on the last page and there are no more pages to scrape. If the page is larger than the counter i, which would not make sense because that would mean I am over counting the amount of pages the user would have wanted. Next I needed an if-statement for the number of pages. This is because I set the parameter numberOfPages default to -1. 
+
+To think about this conceptually on why -1 is infinity: 0 page returns nothing. 1 page returns 1 page. 2 pages returns 2 pages, etc. But what is -1 pages? It doesn't exist in real life no one is ever going to say that or ask for -1 pages so why not use it as infinity? Infinity is commonly represented by -1 in programming. It generally either means infinity or to ignore/don't bother counting. Since nowhere in the page uses -1 (there is nowhere in the function that uses the page number to load a page on the site), it's just an internal count, similar to a microwave clock. I set this as the default value for numberOfPages, so if the user does not specify the page number, it will loop through every single page as long as the number is not NULL. The counter at the bottom (if(numberOfPages > 0){i = i +1}) keeps track of what page it is on and once it hit's the last page, the next page, which is requestURL, will be NULL (because it does not exist) and the loop will stop.
+In the if-statement, if the user entered a (positive) number, then the counter i will be set to 0. This is because it will start counting from page 0. We do not want i = -1, even though it would make sense since there is no such thing as page 0, but since i < numberOfPages, it has to start at 0. If the user does not enter anything for the parameter numberOfPages, then i = -2 because the numberOfPages is defaulted to -1, so in order for it to loop through the pages, i must be less than numberOfPages or else i < numberOfPages is not true, and it will end the loop. 
+
+Finally, I return all the questionData list for the function name "results". Next I take all the data I found and per question summary and rbind them so they are stacked on top of each other from tail to head and made it a data frame. I do rbind again for when I get the next page's questions' information and attributes to the bottom of my current data frame.  I am rbinding allData because allData holds all the information I scrapped from the current page I am on and then go to the next page and go through the while-loop again, that is if the user asks us to, and since allData holds all the information I scrapped from the previous page, I want to add onto this data frame by using another rbind. As I mentioned earlier, the if-statement is my counter for how many pages the user wants. This ends my while-loop.
+
+Finally, I return allData because that is my data frame with all the information I have from all the pages scrapped. I also change the class of the columns that return numbers to numberic incase I want to compare them in the future
+
+###Part 2 - Scraping the Posts, Answers and Comments
+```{r}
+library(RCurl)
+text = getURLContent("http://stackoverflow.com/questions/32280476/gridextra-2-0-0-change-title-size")
+doc = htmlTreeParse(text, useInternalNodes = TRUE)
+
+#get the userName we only want the first one since that is the poster's username so use [[1]]
+userName = getNodeSet(doc, "//div[@class = 'user-details']//a/text()")[[1]]
+userName
+
+#get the user's ID, we only want the first one, which is the poster's userID so use [[1]]
+userID = gsub("[^0-9]", "", as(getNodeSet(doc, "//div[@class = 'user-details']//a")[[1]], "character"))
+userID
+
+#get the date for when the user posted the question, we only want the first one so use [[1]]
+dateTime = getNodeSet(doc, "//div[@class = 'user-action-time']//span[@class = 'relativetime']/text()")[[1]]
+dateTime
+
+#get the user rep, we only want the first one, which is the poster's rep, so use [[1]]
+userRep = getNodeSet(doc, "//div[@class = '-flair']//span[@class = 'reputation-score']/text()")[[1]]
+userRep
+```
+
+I only had time to get the scrape one page and did not have time to make it into a data frame. But above is a sample of how I would do it to get the information I needed. 
+
+###Part 3 Analyzing R Questions on StackOverflow
+####1. What is the distribution of the number of questions each person answered?
+```{r}
+#load the data
+print(load("C:/JANICE/UC DAVIS/FALL 2015/STA 141/Assignment 6/rQAs.rda"))
+
+#subset where type is only answer and comment because sometimes and comment is answer
+typeCommAnswer = subset(rQAs, rQAs$type == 'answer' | rQAs$type == 'comment')
+#subset where type is answer
+typeAnswer = subset(rQAs, rQAs$type == 'answer')
+
+#use get a table of all the unique userid and count how many times each one appears, sort it from highest to lowest, then use as.factor to count how many times the number of questions answered by each user. This gets us the count of all users who answered 1, 2, 3 etc times
+answer = as.factor(sort(table(typeAnswer$userid), decreasing = TRUE))
+#use get a table of all the unique userid and count how many times each one appears, sort it from highest to lowest, then use as.factor to count how many times the number of question comments by each user. This gets us to count of all users who commented 1, 2, 3 etc times
+commAnswer = as.factor(sort(table(typeCommAnswer$userid), decreasing = TRUE))
+
+plot(answer,
+     main = "Distribution of Questions Answered as an Answer",
+     xlab = "Number of Questions Answered",
+     xlim = c(0, 57),
+     ylab= "Number of Users",
+     col = "brown2")
+
+plot(commAnswer, 
+     main = "Distribution of Questions Answered as an Answer or Comment",
+     xlab = "Number of Questions Answered",
+     xlim = c(0, 67),
+     ylab = "Number of Users",
+     col = "cyan4")
+```
+
+For type == 'answer', over 1200 users have contribued to StackOverFlow by answering at least 1 question. Because most users have only answered 1 question, the plot is very skewed to the right. Most users have answered only 1 question. There is a sharp drop for users who answered at least 2 or more questions. This may be because users may not feel they are confident enough with their answer so the opportunity for them to respond to a post is not very high. 
+
+For type == 'answer' or type == 'comment' (includes both answer and comment), over 2000 users have at least answered 1 question as an answer or comment. Because most users have only answered/commented 1 question, the plot is very skewed to the right. There is a drop for users who have answered/comment at least 2 or more times, but this drop is not a sharp as the one we see for just answers. More users have answered or commented on a question than compared to just answering a question. This may be because a user may have at least answered once and commented once. Or because users are more comfortable with commenting than answering if they do not feel their answer is good enough, so instead they comment in the answers/accepted-answers to possible help improve the solution provided.
+
+####2. What are the most common tags?
+```{r}
+#change the tag column in the dataframe getAllQuestion to a character vector
+getAllTags = as.character(getAllQuestion$tags)
+#remove any ; and replace it with nothing (basically drop all ;)
+getAllTags = gsub(";", "", getAllTags, ignore.case = TRUE)
+#split each word every time there is space
+tagSplit = strsplit(getAllTags, " ")
+#get the top 10 tags
+head(sort(table(unlist(tagSplit)), decreasing = TRUE), 10)
+```
+
+I used the dataframe that I found in Part 1 to get the tags, so that way I would not have to webscape again. If I were to do this through webscraping I would have to get the unique qids and webscrape for the tags through the question/post. But that is too much work and would take up time. So from my tag column from Part 1, I should get at least 7500 tags for r because I am scrapping only the questions that are tagged as r, so very single post shouls AT LEAST be tagged as r. Based on my top 10 tags, this is true. The next taggs show that ggplot2, shiny and plot are the next most common tags in the 7500 pages I scrapped from Part 1. All these tags are related to the programming language R since I scarpped only the posts tagged as R.
+
+####3. How many questions are about ggplot?
+```{r}
+#use the data frame from Part 1 and look through the title of each post for the word ggplot, [] means it will search per line for the pattern 'ggplot'
+ggplotTitle = getAllQuestion[grepl('ggplot', getAllQuestion$title, ignore.case = TRUE),]
+#422 rows
+dim(ggplotTitle)
+
+#get the index and type
+rQAsNewDF = data.frame(cbind(rownames(rQAs), rQAs$type, rQAs$text))
+#rename the columns
+names(rQAsNewDF) = c("URLs", "type", "text")
+#get only the type that are labeled as 'question', so I wont have repeated qid or repeated URL's for each accepted answer and comments
+rQAsQuestions = subset(rQAsNewDF, rQAsNewDF$type == 'question')
+#find all the URLs that have the word ggplot in it, [] means it will search per line for the pattern 'ggplot'
+ggplotQuestionsURL = rQAsQuestions[grepl('ggplot', rQAsQuestions$URLs, ignore.case = TRUE),]
+#516 rows
+dim(ggplotQuestionsURL)
+
+#look through the text column for the word ggplot, [] means it will search per line for the pattern 'ggplot'
+ggplotQuestionsText = rQAsQuestions[grepl('ggplot', rQAsQuestions$text, ignore.case = TRUE),]
+#959 rows
+dim(ggplotQuestionsText)
+```
+
+I found 959 posts about ggplot. Below are the comparisons of how I decided on my final answer.
+
+I did not look through the accepted answers or comments for the word 'ggplot' because that wouldn't mean the questions are "about ggplot", that would mean the question "includes ggplot". There are subtle differences. I did not look look through the tag for ggplot because I noticed the most common tag about ggplot is the library ggplot2, which is not what the question asks for. It asks for questions about "ggplot" and not about the library "ggplot2".
+
+I decided to use the data frame provided for me (rQAs) so that way I can get a better idea of how many posts were about ggplot.  As you can see above, I also used my own data frame I made in Part 1 and look through the titles of each post for the word 'ggplot' just so I can get a compairison of what I would find. I decided to look through only the 'title' column because the title is usually the question the post is about. If the title had the word ggplot in it, then it was about ggplot. When looking through the titles for the word ggplot, I found 422 titles with the word ggplot. But f I were to use the data frame I found I would get much less results since I did not scrap all the pages that were tagged as R. I only scapped 150 pages, so this is not a very good idea to scrape the titles I found in Part 1 to get an idea of how many questions are about ggplot.
+
+When I looked through the URL's for the word ggplot, I found 516 titles that have the word ggplot mentioned. I looked through the URLs for this because the titles in StackOverFlow are essentially the question of that post and the URL consists of the title of the post, for example it would look like this: http://stackoverflow.com/questions/32280476/gridextra-2-0-0-change-title-size. The "/gridextra-2-0-0-change-title-size" part is the title of the post. Since the rQAs consists of all the questions tagged as r, looking through the URLs is basically the same thing as looking through the titles, but instead I already have all the titles without having to web scrape anymore pages in Part 1. I took the indexes of the dataframe and cbind-ed it with the column type and text because the indexes are the URLs. The URLs consist of the title of the question on StackOverflow. I subsetted so that I only had the types labeled as questions because the questions above asks me to find the "questions" (aka the title of the post) that are about ggplot. So if the question is about ggplot, then it would have the word ggplot in it. 
+
+Finally, I looked through the text of the data frame, where type is 'question' only, and I get 959 posts/questions about ggplot and this is how I got my final answer. I decided this as my final answer because although the user (poster) did not mention ggplot in the question/title, they may have an issue relating to ggplot and does not necessarily have to mention the word ggplot in the question/title, but instead they talk about their question/issue about ggplot in the post/text. I didn't look through the answers or comments's text because that wouldn't mean the question is about ggplot, but instead the answers or comments that involve ggplot.
+
+####4. How many questions involve XML, HTML or Web Scraping?
+```{r}
+#find all the URLs that have the word 'XML', 'HTML' or 'Web Scraping' in it.
+webScrapingURL = rQAsQuestions[grepl('XML|HTML|Web Scraping', rQAsQuestions$URLs, ignore.case = TRUE),]
+#138 rows
+dim(webScrapingURL)
+
+#find all the text that have the word 'XML', 'HTML' or 'Web Scraping' in it.
+webScrapingText = rQAsQuestions[grep('XML|HTML|Web Scraping', rQAsQuestions$text, ignore.case = TRUE),]
+#1224 rows
+dim(webScrapingText)
+```
+
+There are 1224 questions that involve XML, HTML or Web Scraping. Below are the comparisons of how I decided on my final answer.
+
+Looking through the URLs, There are 138 questions that involve XML, HTML or Web Scraping. Just like in question 5, I took the indexes of the dataframe and cbind-ed it with the column type because the indexes are the URLs which consist of the title of the question on StackOverflow. I subsetted so that I only had the types labeled as questions because the questions above asks me to find the "questions" (aka the title of the post) that are about 'XML', 'HTML' or 'Web Scraping'. If the question is about XML, HTML or Web Scraping, then it would have those words in it. I decided to looked through the URLs for this because the titles in StackOverFlow are essentially the question of that post and the URL consists of the title of the post, for example it would look like this: http://stackoverflow.com/questions/32280476/gridextra-2-0-0-change-title-size. The "/gridextra-2-0-0-change-title-size" part is the title of the post. 
+
+I looked through the text of the data frame, where I looked though where the type was only 'question' because I was asked about which questions involve XML, HTML or Web Scraping, and I get 5457 posts/questions that involve XML, HTML or Web Scraping and this is how I got my final answer. I decided this as my final answer because although the user (poster) did not mention XML, HTML or Web Scraping in the question/title, they may have an issue relating or involving the use of XML, HTML or Web Scraping and does not necessarily have to mention the word XML, HTML or Web Scraping in the question/title, but instead they talk about their question/issue about XML, HTML or Web Scraping in the post/text. Since we are looking for questions that "involve" XML, HTML or Web Scraping. I did not want to look through the answers or comments because that wouldn't mean the question is involving XML, HTML or Web Scraping, it would mean the answers or comments that involve XML, HTML or Web Scraping.
+
+
+####5. What are the names of the R functions referenced in the titles of the posts?
+```{r}
+titleOnly = getAllQuestion$title
+
+library(stringr)
+#find all the words that match the pattern ([a-z0-9\\.]+)\\(
+#in my capture group, ([a-z0-9\\.]+), it gets everything that have a letter, digit, or period, but this word MUST be followed by a (. 
+functionTitle = str_match_all(titleOnly, "([a-z0-9\\.]+)\\(")
+
+#the commented-out code below is TRUE so this means I can do lapply()
+#all(sapply(functionTitle, class) == "matrix")
+
+#get only the second column of functionTitle
+listOfFunctions = lapply(functionTitle, function(x) x[, 2])
+#un-list listOfFunctions
+allFunct = unlist(listOfFunctions)
+#add () at the end of each word because it is a function
+allFunct = paste(allFunct, "()", sep = "")
+#get the top 10 names of the R functions references in the titles of the posts
+head(sort(table(allFunct), decreasing = TRUE), 10)
+```
+
+There are not many titles that have function names in them, which is why the count for each function is very small and most of the function names only appeared once. I used the dataframe I made back in Part 1 to find the names of the R functions references in the titles of the posts. I displayed only the top 10 since many of them only had a count of 1.
+
+In my REGEX pattern, I looked for any word that consisted of a letter, period, or digit, but the function name must be accompanied by at least a left paraenthese ( or else it is not a function. I set this restriction because I want to be sure that I am not grabbing an random word as a function name. I allowed for digits because there are some functions that have numbers in them, such as the R math functuon: atan2(). There are also functions that have periods in them such as data.frame(). Although I will likely get less matches than I should, this ensures that I will not get weird matches that are just random words such as "apple" or "cheese". Also, it is impossible to match all the function names if it is not followed by a () because then I would be must matching every single word. In my REGEX, I only wanted the name of the function without the parameters inside the function since I only needed the name of the function. So this is why my REGEX grabs everything up to the (. This is also why I needed to use paste to add the set of "()".
+
+I was having issues with getting all the matches of a single string when using REGEX. I tried using gregexpr, but it would not grab all the matches even though the g in gregexpr stands for global, meaning it will find all the matches in a single string based on the REGEX pattern or once it found the first match, it woudl stop. So since gregexpr was not working, I used the package called stringr to help me get all the matches within that string. str_match _all() will get all/mutiple matches within a string.
+
+I used lapply() to help me grab only the second column of the list because the first column is the entire match, while the second column consists of only my grouping (the ([a-z0-9\\.]+)). Next I unlisted my list and added "()" to the end of each function name, so it actually looks like a function. Then I used table() to count how many times a function name appears in my variable allFunct.
+
+####6. What are the names of the R functions referenced in the accepted answers and comments of the posts? We can do better than we did in processing the title of the posts as there is HTML markup and we can find content in code blocks.
+```{r}
+#get only the qid 
+rQAsQuestionIDsOnly = rQAs["qid"]
+#remove the duplicates
+rQAsQuestionIDsOnly = rQAsQuestionIDsOnly[!duplicated(rQAsQuestionIDsOnly), ]
+website = "http://stackoverflow.com/"
+
+#create an empty list
+allFunctionsAC = list()
+
+#ignore below, I used it to help me see how much it has scrapped
+#i = 0;
+#iTotal = length(rQAsQuestionIDsOnly)
+
+getAllRFunct = function(answerElement){
+  #concerts the elements into all text
+  singleAC = as(answerElement, "character")
+  #replace . with [^\] because the period will match the right) and so if i have two functions in a row/string, it will treat it only as one match. The matches are stored as a list, and since I wanted the grouping starting at the second grouping so I removed the first column. So now I am left with just the grouping [a-zA-Z]+
+  matchesAC = str_match_all(singleAC, "([a-z\\.]+)\\(")[[1]][,-1]
+  #the for-loop just takes a look at the data, so it doesnt return anything like how sapply does. Since I don't want to return anything I used 
+  for(match in matchesAC){
+    #if the match is not found in allFunctionsAC list, then add it as a new line in my list.
+    if(length(allFunctionsAC[allFunctionsAC == match]) == 0){
+      #gets the position number in prep to insert the new value
+      newLength = length(allFunctionsAC) + 1
+      #inserts the value into the list, use insertion operator because allFuntionsAC is out of scope
+      allFunctionsAC[[newLength]] <<- paste(match, "()", sep = "")
+      } #if(length(allFunctionsAC[allFunctionsAC == match]) == 0){
+  } #for(match in matches){
+} #function(answerElement){
+
+tempAnswerComm = sapply(rQAsQuestionIDsOnly, function(questionID){
+  #get the website
+  questionID = paste("/questions/", questionID, sep="")
+  AnsComURL = GET(getRelativeURL(questionID, website))
+  #parse the HTML doc
+  AnsComTree = htmlTreeParse(AnsComURL, useInternalNodes = TRUE)
+  
+  #get the text of the accepted answer, goes through the parent div and the decendent div, which class of 'post-text' and grab the text, use [[1]] to only grab the first result
+  getAcceptedANswer = xpathSApply(AnsComTree, "//div[@class = 'answer accepted-answer']//div[@class = 'post-text']/text()"[[1]], getAllRFunct)
+  
+  #get the text of the comments for the accepted answer, go through the parent div, then the decendent span, and get the text
+  getComments = xpathSApply(AnsComTree, "//div[@class = 'answer accepted-answer']//span[@class = 'comment-copy']/text()", getAllRFunct)
+  
+#ignore below, I used it to output a percentage to see how much it has scrapped
+#     i <<- i+1
+#     if(i %% 50 == 1)
+#     {
+#       cat(round(i/iTotal*100, 2),"% done.\n", sep="")
+#     }
+  
+  return(NULL)
+}) #sapply(rQAsQuestionIDsOnly, function(questionID){
+
+#remove tempAnswerComm because we don't need it
+rm("tempAnswerComm")
+
+#get any 10 names of the R functions referenced in the accepted answers and comments of the posts
+head(allFunctionsAC, 10)
+```
+
+In order to get the text of the accepted answers and the comments of the accepted answers I needed to Web scrape through the "qid" from the data frame rQAs. I scrapped through the unique qids because I saw there was multiple of a single qid because there was question, answer and comments from the same question. So it wouldn't matter if I did type == 'question' or type == 'answer' because the qid for those are the same for a single question. I did not scrape through the links either (the index) because although each link was different (for each the question, answer and comments), they all lead you to the same page where all the questions and answers are. I also realized it would not be a good idea to scrape just "answers" or just "comments" because not all the questions had accepted answers. If I did this, then I would be scraping non-accepted answers and non-accepted answer's comments. To prevent this, I used the unique qids, and got the URL. 
+
+From the URL I took the text of only the accepted answer and comments from only the accepted answer. So questions that do not have an accepted answer will be ignored by my function. I had a global variable called allFunctionsAC, which I set to an empty list, and it will store all the R functions referenced in the accepted answers and comments of the posts. I am using a global variable here very sparingly. Since this assignment is a small project and I am able to see all the variables I have, I won't run into issues of having variables of the same name. However, if I were writing a large program, such as a video game, I would not have used a global variable in that situation since I probably wouldn't be able to keep up with all the variable names I have. But since this is a small assignment, I used a global variable.
+
+For my getAllRFunct function, it passes in one parameter, which passes in the text of the accepted answer or comments, and changes it to a character (because getNodeSet returns something complex). Next I take the entire text and treat it as a single string and find all the possible functions that matches my REGEX. In my REGEX pattern, I looked for any word that consisted of a letter, period, or digit, but the function name must be accompanied by at least a left paraenthese ( or else it is not a function. I set this restriction because I want to be sure that I am not grabbing an random word as a function name. I allowed for digits because there are some functions that have numbers in them, such as the R math functuon: atan2(). There are also functions that have periods in them such as data.frame(). Although I will likely get less matches than I should, this ensures that I will not get weird matches that are just random words such as "apple" or "cheese". Also, it is impossible to match all the function names if it is not followed by a () because then I would be must matching every single word. In my REGEX, I only wanted the name of the function without the parameters inside the function since I only needed the name of the function. Using str_match_all will find all the matches in a single string instead of just stopping after finding the first match. I took only the matches from my second column because the first column (hence [,-1] to remove the first column since I do not need it) consists of the entire 
+
+Next, I needed to put all the functions I found into the list allFunctionsAC. I used a for-loop because if I were to use sapply, it would return something (since that is just how sapply works) and I did not want it to return anything. It would be taking up unnecessary memory in my function. Inside my for-loop, first it checks to see if the name of the R function is already in the list. If it is already in the list, then add it into the list. This is done by extending the list's length by 1. This prevents the list from having multiple names of R functions. Next, after each new name/function that is added to a list, add "()" at the end of so it looks like an actual function. 
+
+Following my function, I used a loop to help me get all the URLs corresponding to the qid. This is done by first getting the qid (questionID) and combining it with the pattern "/questions/", so it will end up looking something like this: "/questions/1234567890". I did this so I can use getRelativeURL() to get the actual URL that will link me to the question. I already defined "http://stackoverflow.com/" as website. If I did not do this, then I would get an error in retrieving the URL. This is why I also did not add /questions/ to the end of "http://stackoverflow.com/" or else my URL would turn out something like this: "http://stackoverflow.com//questions/questions". 
+
+Now that I have the URL and the html doc, I can now go through each question and find the 'answer accepted-answer' (if the question has one, if it does not, it ignores it), grabs the text of the accepted returns the text of the accepted answer, then the text accepted answer will get passed into the getAllRFunct to find all the names of R functions referenced in the accepted answer. Next, in getComments, it uses a the path "//div[@ class = 'answer accepted-answer']//span[@class = 'comment-copy']/text()" to grab the text of the accept answer comments. This is then passed into the getAllRFunct, which will look through the text for names of R functions that are referenced in the comments. I returned NULL because I really don't need anything back from tempAnswerComm, but since I used sapply, I had to return something, so I returned nothing. I removed tempAnswerConn, since I do not need it. I just needed a loop that went in a grabbed all the URLs and the R functions.
